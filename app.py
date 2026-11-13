@@ -314,7 +314,7 @@ for _it in ITEMS:
         _dedup.append(_it)
 ITEMS = _dedup
 ITEM_BY_NAME = {it["name"]: it for it in ITEMS}
-QUICK_CHIPS = ["옷", "신발", "우산", "건전지", "폐의약품", "스티로폼", "깨진 유리", "프라이팬·냄비", "소파", "소형가전", "책·잡지·교과서", "앨범·사진첩"]
+QUICK_CHIPS = ["앨범·사진첩", "깨끗한 헌옷·신발", "프라이팬·냄비", "영수증·택배 전표", "우산", "깨진 유리", "보조배터리", "칫솔·옷걸이·CD", "껍데기·씨앗", "폐의약품", "소형가전", "책·잡지·교과서", "철제 옷걸이·집게", "커피 찌꺼기·티백"]
 
 # 동네 배출표 샘플 (rec=재활용, gen=일반, food=음식물)
 AREAS = {}  # 샘플 동네 없음: 사용자가 직접 입력
@@ -330,7 +330,7 @@ PAGES = {"area": "🏘️ 우리 동네", "find": "🔍 물건 검색", "qr": "�
 # 2. 상태 관리
 #    화면을 바꾸면 안 보이는 위젯의 값이 사라지므로, 매번 값을 다시 저장해 둡니다.
 # ──────────────────────────────────────────────────────────────
-PERSIST = ["use_cam", "query", "memo", "area", "big", "app_url", "include_area", "gu"] + [
+PERSIST = ["use_cam", "query", "memo", "area", "big", "app_url", "include_area"] + [
     f"{k}_{s}" for k in ("rec", "gen", "food") for s in ("days", "s", "e", "p", "tp")
 ]
 for _k in PERSIST:
@@ -402,17 +402,6 @@ if "init" not in st.session_state:
         st.session_state[f"{_k}_s"] = dtime(18, 0)
         st.session_state[f"{_k}_e"] = dtime(22, 0)
         st.session_state[f"{_k}_p"] = ""
-        _v = st.query_params.get(_k, "")
-        try:  # 링크에 저장된 값 불러오기: 요일|시작|끝|장소
-            _d, _a, _b, _p = (_v.split("|") + ["", "", "", ""])[:4]
-            if _v:
-                st.session_state[f"{_k}_days"] = [c for c in _d if c in WEEK]
-                st.session_state[f"{_k}_s"] = dtime(int(_a[:2]), int(_a[2:]))
-                st.session_state[f"{_k}_e"] = dtime(int(_b[:2]), int(_b[2:]))
-                st.session_state[f"{_k}_p"] = _p
-        except (ValueError, IndexError):
-            pass
-    st.session_state["gu"] = st.query_params.get("gu", "")
     st.session_state["query"] = ""
     st.session_state["recent"] = []
     st.session_state["memo"] = ""
@@ -818,7 +807,6 @@ def screen_find(now: datetime) -> None:
     st.text_input(
         "물건 이름", key="query", placeholder="예) 치킨 뼈, 페트병, 소파", label_visibility="collapsed"
     )
-    st.caption("🎤 키보드의 마이크 버튼을 누르고 말해도 돼요")
     render_photo_box(now)
     query = st.session_state["query"].strip()
 
@@ -853,48 +841,9 @@ def screen_find(now: datetime) -> None:
     footer()
 
 
-def save_to_url() -> None:
-    """입력한 일정을 주소(URL)에 저장합니다. 이 주소를 즐겨찾기·홈 화면에 추가하면 다시 입력하지 않아요."""
-    ss = st.session_state
-    try:
-        for k in ("rec", "gen", "food"):
-            d = "".join(w for w in WEEK if w in ss[f"{k}_days"])
-            st.query_params[k] = f"{d}|{ss[f'{k}_s']:%H%M}|{ss[f'{k}_e']:%H%M}|{ss[f'{k}_p']}"
-        if ss.get("gu"):
-            st.query_params["gu"] = ss["gu"]
-        elif "gu" in st.query_params:
-            del st.query_params["gu"]
-    except Exception:
-        pass
-
-
-def render_today(now: datetime) -> None:
-    ss = st.session_state
-    today = WEEK[now.weekday()]
-    todo = [k for k in ("rec", "gen", "food") if today in ss[f"{k}_days"]]
-    if not any(ss[f"{k}_days"] for k in ("rec", "gen", "food")):
-        msg, cls = "👇 버리는 날을 눌러 주세요", "info"
-    elif todo:
-        msg = "오늘은 " + " · ".join(KIND_LABEL[k] for k in todo) + " 버리는 날!"
-        cls = "ok"
-    else:
-        msg, cls = "오늘은 버리는 날이 아니에요", "info"
-    st.markdown(f'<div class="drop {cls}" style="text-align:center;font-size:1.5rem;font-weight:800">{msg}</div>', unsafe_allow_html=True)
-
-
-def render_gu_buttons() -> None:
-    st.text_input("우리 구청 이름", key="gu", placeholder="예) 광진구청")
-    gu = st.session_state.get("gu", "").strip()
-    if gu:
-        c1, c2 = st.columns(2)
-        c1.link_button("📞 구청 연락처", f"https://search.naver.com/search.naver?query={quote(gu + ' 청소행정과 전화번호')}", use_container_width=True)
-        c2.link_button("🛋️ 큰 물건 신고", f"https://search.naver.com/search.naver?query={quote(gu + ' 대형폐기물 신고 수수료')}", use_container_width=True)
-
-
 def screen_area() -> None:
     render_nav("area")
     st.markdown('<div class="page-title">우리 동네<br>버리는 날</div>', unsafe_allow_html=True)
-    render_today(now)
 
     # ── 우리 동네 (단순) ──
     with st.container(border=True):
@@ -915,9 +864,6 @@ def screen_area() -> None:
             if st.session_state[f"{k}_e"] <= st.session_state[f"{k}_s"]:
                 st.warning("'까지'가 '부터'보다 늦어야 해요.")
 
-    with st.container(border=True):
-        render_gu_buttons()
-    st.caption("💾 입력한 내용은 이 화면 주소에 저장돼요. 즐겨찾기나 홈 화면에 추가해 두세요.")
     with st.container(key="size_toggle"):
         st.toggle("글자 더 크게", key="big")
     footer()
@@ -934,8 +880,6 @@ def screen_qr() -> None:
         st.markdown('<div class="step" style="text-align:center">📷 폰 카메라로 찍어 보세요</div>', unsafe_allow_html=True)
     else:
         st.warning("QR 링크를 넣어 주세요.")
-    if base.startswith(("http://", "https://")):
-        st.link_button("💬 문자로 링크 보내기", f"sms:?&body={quote('분리배출 앱: ' + base)}", use_container_width=True)
     with st.expander("QR 링크"):
         st.text_input("QR 링크", key="app_url", placeholder="https://내앱이름.streamlit.app")
 
@@ -959,5 +903,3 @@ elif page == "qr":
     screen_qr()
 else:
     screen_area()
-
-save_to_url()
