@@ -317,18 +317,7 @@ ITEM_BY_NAME = {it["name"]: it for it in ITEMS}
 QUICK_CHIPS = ["앨범·사진첩", "깨끗한 헌옷·신발", "프라이팬·냄비", "영수증·택배 전표", "우산", "깨진 유리", "보조배터리", "칫솔·옷걸이·CD", "껍데기·씨앗", "폐의약품", "소형가전", "책·잡지·교과서", "철제 옷걸이·집게", "커피 찌꺼기·티백"]
 
 # 동네 배출표 샘플 (rec=재활용, gen=일반, food=음식물)
-AREAS = {
-    "샘플 동네 A": {
-        "rec": (["수", "일"], dtime(18, 0), dtime(22, 0), "단지 분리배출장"),
-        "gen": (["월", "목"], dtime(18, 0), dtime(22, 0), "단지 종량제 배출장"),
-        "food": (["월", "화", "수", "목", "금", "토", "일"], dtime(18, 0), dtime(23, 0), "음식물 수거함"),
-    },
-    "샘플 동네 B": {
-        "rec": (["화", "금"], dtime(7, 0), dtime(21, 0), "집 앞 지정 장소"),
-        "gen": (["월", "수", "금"], dtime(18, 0), dtime(23, 0), "집 앞 지정 장소"),
-        "food": (["월", "화", "수", "목", "금"], dtime(18, 0), dtime(23, 0), "음식물 수거함"),
-    },
-}
+AREAS = {}  # 샘플 동네 없음: 사용자가 직접 입력
 CUSTOM_AREA = "직접 입력"
 KIND_KEY = {"재활용": "rec", "일반": "gen", "음식물": "food"}
 KIND_PLAIN = {"rec": "재활용", "gen": "일반쓰레기", "food": "음식물"}
@@ -407,10 +396,12 @@ def make_pick(widget_key: str):
 
 
 if "init" not in st.session_state:
-    wanted = st.query_params.get("area", "")  # QR에 ?area=샘플 동네 A 가 담겨 있으면 미리 선택
-    first = wanted if wanted in AREAS else list(AREAS)[0]
-    st.session_state["area"] = first
-    apply_preset(first)
+    st.session_state["area"] = CUSTOM_AREA
+    for _k in ("rec", "gen", "food"):
+        st.session_state[f"{_k}_days"] = []
+        st.session_state[f"{_k}_s"] = dtime(18, 0)
+        st.session_state[f"{_k}_e"] = dtime(22, 0)
+        st.session_state[f"{_k}_p"] = ""
     st.session_state["query"] = ""
     st.session_state["recent"] = []
     st.session_state["memo"] = ""
@@ -689,10 +680,7 @@ def signal_card(sig: str, headline: str) -> None:
 
 
 def footer() -> None:
-    st.markdown(
-        '<div class="foot">참고용이에요. 정확한 기준은 구청에 확인하세요.</div>',
-        unsafe_allow_html=True,
-    )
+    return
 
 
 DEFAULT_DROP = {
@@ -859,7 +847,6 @@ def screen_area() -> None:
 
     # ── 우리 동네 (단순) ──
     with st.container(border=True):
-        st.selectbox("우리 동네", [*AREAS, CUSTOM_AREA], key="area", on_change=on_area_change)
         for k in ("rec", "gen", "food"):
             icon = {"rec": "♻️", "gen": "🗑️", "food": "🍚"}[k]
             st.markdown(f'<div class="day-title">{icon} {KIND_PLAIN[k]}</div>', unsafe_allow_html=True)
