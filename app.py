@@ -690,8 +690,7 @@ def signal_card(sig: str, headline: str) -> None:
 
 def footer() -> None:
     st.markdown(
-        f'<div class="foot">안내 기준일: {DATA_NOTE}<br>'
-        "참고용입니다. 최종 기준은 관할 지자체에 확인하세요.</div>",
+        '<div class="foot">참고용이에요. 정확한 기준은 구청에 확인하세요.</div>',
         unsafe_allow_html=True,
     )
 
@@ -735,19 +734,18 @@ def render_unknown(query: str) -> None:
     guess = fallback_guess(query)
     if guess:
         text, way = guess
-        signal_card(way, f"'{query}'은(는) 정확한 정보가 없어요. 비슷한 종류 기준: {text}")
-        st.markdown('<div class="drop info">정확하지 않을 수 있어요. 헷갈리면 구청·주민센터에 확인하세요.</div>', unsafe_allow_html=True)
+        signal_card(way, f"'{query}'은(는) 비슷한 종류 기준: {text}")
+        st.markdown('<div class="drop info">틀릴 수 있어요. 구청에 확인하세요.</div>', unsafe_allow_html=True)
     else:
-        signal_card("unknown", "아직 등록되지 않은 물건이에요. 동네 기준을 확인해 주세요")
-        st.markdown('<div class="drop info">관할 구청(청소 담당 부서)이나 동 주민센터에 문의하면 가장 정확해요.</div>', unsafe_allow_html=True)
+        signal_card("unknown", "아직 없는 물건이에요. 구청에 확인해 주세요")
+        st.markdown('', unsafe_allow_html=True)
     st.link_button("🔎 인터넷에서 찾아보기", f"https://search.naver.com/search.naver?query={quote(query + ' 분리배출')}")
 
 
 def render_photo_box(now: datetime) -> None:
     if not (_secret("GEMINI_API_KEY") or _secret("OPENAI_API_KEY")):
         return  # AI 키가 없으면 사진 기능은 화면에 보이지 않음
-    with st.expander("📷 사진으로 찾기", expanded=True):
-        st.markdown('<div class="step">물건을 찍거나 사진을 올리면 AI가 이름을 알아내서 어디에 버리는지 알려드려요.</div>', unsafe_allow_html=True)
+    with st.expander("📷 사진으로 찾기", expanded=False):
         cam = st.toggle("카메라로 바로 찍기", key="use_cam")
         if cam:
             img = st.camera_input("물건 찍기", label_visibility="collapsed")
@@ -760,7 +758,7 @@ def render_photo_box(now: datetime) -> None:
                 with st.spinner("무엇인지 살펴보는 중이에요..."):
                     names, err = recognize(data)
                 st.session_state.update(photo_hash=h, photo_names=names, photo_err=err)
-        st.caption("사진은 저장하지 않지만, 인식을 위해 AI 서비스(Google 또는 OpenAI)로 전송돼요. 얼굴·주소·송장이 나오지 않게 찍어 주세요.")
+        st.caption("사진은 AI 서비스로 전송돼요. 얼굴·송장은 찍지 마세요.")
     err = st.session_state.get("photo_err", "")
     if err == "NOKEY":
         st.markdown('<div class="drop info">사진 인식은 AI 키를 설정하면 켜져요. Streamlit 앱 설정 → Secrets에 <b>GEMINI_API_KEY</b> 또는 <b>OPENAI_API_KEY</b>를 넣어 주세요. 그 전에는 글자로 검색해 주세요.</div>', unsafe_allow_html=True)
@@ -771,12 +769,12 @@ def render_photo_box(now: datetime) -> None:
         st.markdown('<div class="sec-title">📷 사진 인식 결과</div>', unsafe_allow_html=True)
         for n in names:
             results, _mode = search(n)
-            st.markdown(f'<div class="step">AI가 본 물건: <b>{html.escape(n)}</b></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="step">📷 <b>{html.escape(n)}</b></div>', unsafe_allow_html=True)
             if results:
                 render_result(results[0], now)
             else:
                 render_unknown(n)
-        st.caption("AI가 물건을 잘못 알아볼 수 있어요. 이름이 다르면 위 검색창에 직접 입력해 주세요.")
+        st.caption("틀리면 위 검색창에 직접 써 주세요.")
         st.button("🧹 사진 결과 지우기", key="clear_photo", on_click=lambda: st.session_state.update(photo_names=[], photo_err=""))
 
 
@@ -833,7 +831,6 @@ def screen_find(now: datetime) -> None:
                 "최근에 찾아본 것", st.session_state["recent"], key="recent_pick",
                 on_change=make_pick("recent_pick"), label_visibility="collapsed",
             )
-        render_legend()
     else:
         results, mode = search(query)
         if not results:
@@ -858,13 +855,11 @@ def screen_find(now: datetime) -> None:
 
 def screen_area() -> None:
     render_nav("area")
-    st.markdown('<div class="page-title">우리 동네<br>배출 일정</div>', unsafe_allow_html=True)
-    st.button("🔍 물건 검색하기", key="to_find", on_click=go, args=("find",), use_container_width=True)
+    st.markdown('<div class="page-title">우리 동네<br>버리는 날</div>', unsafe_allow_html=True)
 
     # ── 우리 동네 (단순) ──
     with st.container(border=True):
-        st.selectbox("① 우리 동네 고르기", [*AREAS, CUSTOM_AREA], key="area", on_change=on_area_change)
-        st.markdown('<div class="sec-title" style="margin-top:.6rem">② 버리는 날</div>', unsafe_allow_html=True)
+        st.selectbox("우리 동네", [*AREAS, CUSTOM_AREA], key="area", on_change=on_area_change)
         for k in ("rec", "gen", "food"):
             icon = {"rec": "♻️", "gen": "🗑️", "food": "🍚"}[k]
             st.markdown(f'<div class="day-title">{icon} {KIND_PLAIN[k]}</div>', unsafe_allow_html=True)
@@ -872,20 +867,15 @@ def screen_area() -> None:
                 f"{KIND_PLAIN[k]} 요일", WEEK, selection_mode="multi", key=f"{k}_days",
                 label_visibility="collapsed",
             )
-        st.markdown('<div class="sec-title" style="margin-top:.6rem">③ 시간과 장소는 직접 정하세요</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sec-title" style="margin-top:.6rem">🕗 시간 · 장소</div>', unsafe_allow_html=True)
         for k in ("rec", "gen", "food"):
             st.markdown(f'<div class="day-title">{KIND_PLAIN[k]}</div>', unsafe_allow_html=True)
             c1, c2 = st.columns(2)
-            c1.time_input("시작 시간", key=f"{k}_s", step=300)
-            c2.time_input("끝나는 시간", key=f"{k}_e", step=300)
-            st.text_input("장소", key=f"{k}_p", placeholder="예) 101동 앞")
+            c1.time_input("부터", key=f"{k}_s", step=300)
+            c2.time_input("까지", key=f"{k}_e", step=300)
+            st.text_input("장소", key=f"{k}_p", placeholder="예) 101동 앞", label_visibility="collapsed")
             if st.session_state[f"{k}_e"] <= st.session_state[f"{k}_s"]:
-                st.warning("끝나는 시간이 시작보다 늦어야 해요.")
-        st.markdown(
-            "".join(f'<div class="step">{html.escape(sched_summary(k))}</div>' for k in ("rec", "gen", "food")),
-            unsafe_allow_html=True,
-        )
-        st.caption("샘플 동네는 예시예요. 우리 동네 요일로 눌러 고치세요. 새로고침하면 처음 값으로 돌아가요.")
+                st.warning("'까지'가 '부터'보다 늦어야 해요.")
 
     with st.container(key="size_toggle"):
         st.toggle("글자 더 크게", key="big")
@@ -902,9 +892,9 @@ def screen_qr() -> None:
         st.image(make_qr_png(base), use_container_width=True)
         st.markdown('<div class="step" style="text-align:center">📷 폰 카메라로 찍어 보세요</div>', unsafe_allow_html=True)
     else:
-        st.warning("앱 주소를 넣으면 QR이 나와요.")
-    with st.expander("앱 주소 바꾸기"):
-        st.text_input("앱 주소", key="app_url", placeholder="https://내앱이름.streamlit.app")
+        st.warning("QR 링크를 넣어 주세요.")
+    with st.expander("QR 링크"):
+        st.text_input("QR 링크", key="app_url", placeholder="https://내앱이름.streamlit.app")
 
     with st.container(key="size_toggle"):
         st.toggle("글자 더 크게", key="big")
