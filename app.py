@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-♻️ 분리배출 — 이거 어떻게 버려요? (Streamlit · QR 접속형)
+♻️ 분리배출 — 이거 어떻게 버려요? (Streamlit)
 
-화면은 딱 3개 (표지 포함):
-  1) 표지      : 큰 글씨 '분리배출' — 글자를 누르면 다음 화면으로 (사진 인식은 GEMINI_API_KEY 또는 OPENAI_API_KEY 필요)
-  2) 판독      : 물건 이름 → 🟢🟡🔴⚪ 신호등 + "지금 내놔도 돼요?"
-  3) 동네·QR   : 우리 동네 배출 일정 설정 + 앱 접속용 QR 만들기
-
-※ 물건 데이터는 서울시 표준 기준 등 공개 자료를 정리한 것이고 지역마다 다를 수 있어요.
-   동네 배출 요일 샘플은 예시입니다. 실제 서비스 전에 공공데이터 API로 교체·검수하세요.
+화면: 표지 → 우리 동네(지역·버리는 날) → 물건 검색
+  - 사진 인식은 GEMINI_API_KEY 또는 OPENAI_API_KEY가 Secrets에 있을 때만 켜집니다.
+  - 물건 데이터는 서울시 표준 기준 등 공개 자료를 정리한 것이며 지역마다 다를 수 있습니다.
+    실제 서비스 전에 공공데이터 API로 교체·검수하세요.
 """
 from __future__ import annotations
 
@@ -20,13 +17,11 @@ import html
 import os
 from datetime import datetime, time as dtime, timedelta, timezone
 from io import BytesIO
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
-import qrcode
 import requests
 from PIL import Image
 import streamlit as st
-from qrcode.constants import ERROR_CORRECT_M
 
 st.set_page_config(
     page_title="분리배출",
@@ -37,7 +32,6 @@ st.set_page_config(
 
 KST = timezone(timedelta(hours=9))
 WEEK = ["월", "화", "수", "목", "금", "토", "일"]
-DATA_NOTE = "서울시 표준 배출 기준(2025-08-06 수정)·환경부 요령 등 공개 자료 정리 · 지역마다 다를 수 있어요"
 
 # ──────────────────────────────────────────────────────────────
 # 1. 데이터 (나중에 공공 API로 바꿀 땐 이 블록만 교체하면 됩니다)
@@ -317,65 +311,30 @@ ITEM_BY_NAME = {it["name"]: it for it in ITEMS}
 QUICK_CHIPS = ["앨범·사진첩", "깨끗한 헌옷·신발", "프라이팬·냄비", "영수증·택배 전표", "우산", "깨진 유리", "보조배터리", "칫솔·옷걸이·CD", "껍데기·씨앗", "폐의약품", "소형가전", "책·잡지·교과서", "철제 옷걸이·집게", "커피 찌꺼기·티백"]
 
 # 동네 배출표 샘플 (rec=재활용, gen=일반, food=음식물)
-AREAS = {}  # 샘플 동네 없음: 사용자가 직접 입력
-CUSTOM_AREA = "직접 입력"
 KIND_KEY = {"재활용": "rec", "일반": "gen", "음식물": "food"}
 KIND_PLAIN = {"rec": "재활용", "gen": "일반쓰레기", "food": "음식물"}
 KIND_LABEL = {"rec": "♻️ 재활용", "gen": "🗑️ 일반(종량제)", "food": "🍚 음식물"}
 
-PAGES = {"area": "🏘️ 우리 동네", "find": "🔍 물건 검색", "qr": "📲 QR"}  # 화면은 딱 3개
+PAGES = {"area": "🏘️ 우리 동네", "find": "🔍 물건 검색"}  # 화면은 딱 2개
 
 
 # ──────────────────────────────────────────────────────────────
 # 2. 상태 관리
 #    화면을 바꾸면 안 보이는 위젯의 값이 사라지므로, 매번 값을 다시 저장해 둡니다.
 # ──────────────────────────────────────────────────────────────
-PERSIST = ["region", "use_cam", "query", "memo", "area", "big", "app_url", "include_area", "place_all"] + [
-    f"{k}_{s}" for k in ("rec", "gen", "food") for s in ("days", "s", "e", "p", "tp")
+PERSIST = ["region", "use_cam", "query", "big"] + [
+    f"{k}_{s}" for k in ("rec", "gen", "food") for s in ("days", "s", "e")
 ]
 for _k in PERSIST:
     if _k in st.session_state:
         st.session_state[_k] = st.session_state[_k]
 
 
-def apply_preset(name: str) -> None:
-    preset = AREAS.get(name)
-    if not preset:  # '직접 입력'이면 현재 값을 그대로 둠
-        return
-    for k, (days, start, end, place) in preset.items():
-        st.session_state[f"{k}_days"] = list(days)
-        st.session_state[f"{k}_s"] = start
-        st.session_state[f"{k}_e"] = end
-        st.session_state[f"{k}_p"] = place
-
-
-SAME = "샘플 시간 그대로"
-TIME_PRESETS = {
-    "아침 06:00~10:00": (dtime(6, 0), dtime(10, 0)),
-    "낮 10:00~18:00": (dtime(10, 0), dtime(18, 0)),
-    "저녁 18:00~23:00": (dtime(18, 0), dtime(23, 0)),
-    "하루 종일": (dtime(0, 0), dtime(23, 59)),
-}
-
-
-def on_time_pick(k: str):
-    def _cb() -> None:
-        v = st.session_state.get(f"{k}_tp")
-        if v in TIME_PRESETS:
-            st.session_state[f"{k}_s"], st.session_state[f"{k}_e"] = TIME_PRESETS[v]
-    return _cb
-
-
-def on_area_change() -> None:
-    apply_preset(st.session_state["area"])
-
-
 def save_and_go() -> None:
-    """확인: 지역·요일·시간·장소를 주소에 저장하고 검색 화면으로 이동"""
+    """확인: 지역·요일·시간을 주소에 저장하고 검색 화면으로 이동"""
     ss = st.session_state
     qp = st.query_params
     qp["r"] = ss.get("region", "").strip()
-    qp["p"] = ss.get("place_all", "")
     for k in ("rec", "gen", "food"):
         days = "".join(ss.get(f"{k}_days") or [])
         qp[k] = f"{days}|{ss[f'{k}_s']:%H%M}|{ss[f'{k}_e']:%H%M}"
@@ -408,14 +367,11 @@ def make_pick(widget_key: str):
 
 
 if "init" not in st.session_state:
-    st.session_state["area"] = CUSTOM_AREA
     st.session_state["region"] = st.query_params.get("r", "")
-    st.session_state["place_all"] = st.query_params.get("p", "")
     for _k in ("rec", "gen", "food"):
         st.session_state[f"{_k}_days"] = []
         st.session_state[f"{_k}_s"] = dtime(18, 0)
         st.session_state[f"{_k}_e"] = dtime(22, 0)
-        st.session_state[f"{_k}_p"] = ""
         try:  # 저장된 값 불러오기 (요일|시작|끝)
             _v = st.query_params.get(_k, "")
             if _v:
@@ -428,7 +384,6 @@ if "init" not in st.session_state:
             pass
     st.session_state["query"] = ""
     st.session_state["recent"] = []
-    st.session_state["memo"] = ""
     st.session_state["page"] = "cover"
     st.session_state["init"] = True
 
@@ -555,7 +510,7 @@ def recognize(data: bytes):
 
 def get_sched(k: str) -> dict:
     ss = st.session_state
-    return {"days": ss[f"{k}_days"], "start": ss[f"{k}_s"], "end": ss[f"{k}_e"], "place": ss[f"{k}_p"]}
+    return {"days": ss[f"{k}_days"], "start": ss[f"{k}_s"], "end": ss[f"{k}_e"]}
 
 
 def drop_status(k: str, now: datetime):
@@ -563,56 +518,18 @@ def drop_status(k: str, now: datetime):
     s = get_sched(k)
     days = {WEEK.index(d) for d in s["days"]}
     if not days:
-        return "warn", "우리 동네 배출 요일이 아직 비어 있어요. '우리 동네 배출일정' 화면에서 입력해 주세요."
-    place = s["place"] or "정해진 배출 장소"
+        return "warn", "우리 동네 배출 요일이 아직 비어 있어요. '우리 동네' 화면에서 골라 주세요."
+    name = KIND_PLAIN[k]
+    names = "·".join(d + "요일" for d in WEEK if d in s["days"])
     rng = f"{s['start']:%H:%M}~{s['end']:%H:%M}"
-    today, t = now.weekday(), now.time()
+    today = now.weekday()
     if today in days:
-        if t < s["start"]:
-            return "wait", f"오늘이 수거일이에요. {s['start']:%H:%M}부터 {place}에 내놓을 수 있어요."
-        if t <= s["end"]:
-            return "ok", f"지금 내놔도 돼요! {s['end']:%H:%M}까지 {place}에 내놓으세요."
+        return "ok", f"오늘({WEEK[today]}요일)은 {name} 배출일이에요. {rng}에 내놓으세요."
     for add in range(1, 8):
         if (today + add) % 7 in days:
             d = now + timedelta(days=add)
-            when = {1: "내일", 2: "모레"}.get(add, f"{add}일 뒤")
-            head = "오늘 배출 시간은 지났어요." if today in days else "오늘은 수거일이 아니에요."
-            return "next", f"{head} {when}({WEEK[d.weekday()]}, {d.month}월 {d.day}일) {rng}에 {place}에 내놓으세요."
+            return "next", f"{name}은 {names}에 배출하셔야 합니다. 다음 배출일은 {WEEK[d.weekday()]}요일({d.month}월 {d.day}일)이에요."
     return "warn", "배출 요일을 확인할 수 없어요."
-
-
-def sched_summary(k: str) -> str:
-    s = get_sched(k)
-    days = "·".join(d for d in WEEK if d in s["days"]) or "요일 미입력"
-    return f"{KIND_LABEL[k]}  |  {days}  {s['start']:%H:%M}~{s['end']:%H:%M}"
-
-
-def detect_app_url() -> str:
-    url = os.environ.get("APP_URL", "")
-    if not url:
-        try:
-            url = str(st.secrets.get("APP_URL", ""))
-        except Exception:
-            url = ""
-    if not url:
-        try:
-            host = st.context.headers.get("Host", "")
-            if host:
-                scheme = "http" if host.startswith(("localhost", "127.0.0.1")) else "https"
-                url = f"{scheme}://{host}"
-        except Exception:
-            url = ""
-    return url
-
-
-def make_qr_png(url: str) -> bytes:
-    qr = qrcode.QRCode(error_correction=ERROR_CORRECT_M, box_size=12, border=3)
-    qr.add_data(url)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="#14532d", back_color="white")
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -703,10 +620,6 @@ def signal_card(sig: str, headline: str) -> None:
     )
 
 
-def footer() -> None:
-    return
-
-
 DEFAULT_DROP = {
     "대형": "신고한 배출일에만 내놓을 수 있어요. 신고 없이 내놓으면 과태료 대상일 수 있어요.",
     "불연성": "특수규격마대(불연성 봉투)에 담아 내놓아요.",
@@ -722,14 +635,12 @@ def render_drop(item: dict, now: datetime) -> None:
     if kind in KIND_KEY:
         k = KIND_KEY[kind]
         status, msg = drop_status(k, now)
-        title = f"🕗 지금 내놔도 돼요? · {KIND_LABEL[k]}"
+        title = f"🕗 언제 버려요? · {KIND_LABEL[k]}"
     else:
-        status, title = "info", "🕗 지금 내놔도 돼요?"
+        status, title = "info", "🕗 언제 버려요?"
         msg = item.get("drop") or DEFAULT_DROP.get(kind, "동네 기준을 확인하세요.")
-    memo = st.session_state.get("memo", "").strip()
-    memo_html = f"<br>📝 {html.escape(memo)}" if memo and kind in KIND_KEY else ""
     st.markdown(
-        f'<div class="drop {status}"><b>{title}</b><br>{html.escape(msg)}{memo_html}</div>',
+        f'<div class="drop {status}"><b>{title}</b><br>{html.escape(msg)}</div>',
         unsafe_allow_html=True,
     )
 
@@ -824,16 +735,8 @@ def render_photo_box(now: datetime) -> None:
         st.button("🧹 사진 결과 지우기", key="clear_photo", on_click=lambda: st.session_state.update(photo_names=[], photo_err=""))
 
 
-def render_legend() -> None:
-    rows = "".join(
-        f'<div class="lg"><span class="lgdot" style="background:{SIGNAL[k][2]}"></span>{html.escape(t)}</div>'
-        for k, t in LEGEND
-    )
-    st.markdown(f'<div class="legend">{rows}</div>', unsafe_allow_html=True)
-
-
 def render_nav(page: str) -> None:
-    """상단 화면 이동 버튼 (3개)"""
+    """상단 화면 이동 버튼 (2개 + 표지)"""
     st.session_state["nav"] = PAGES[page]
     st.segmented_control(
         "화면 이동", list(PAGES.values()), key="nav", on_change=on_nav, label_visibility="collapsed"
@@ -896,7 +799,8 @@ def screen_find(now: datetime) -> None:
                     on_change=make_pick("sim_pick"), label_visibility="collapsed",
                 )
         st.button("🔄 다른 물건 찾기", on_click=set_query, args=("",))
-    footer()
+    with st.container(key="size_toggle"):
+        st.toggle("글자 더 크게", key="big")
 
 
 def screen_area() -> None:
@@ -922,34 +826,10 @@ def screen_area() -> None:
             c2.time_input("까지", key=f"{k}_e", step=300)
             if st.session_state[f"{k}_e"] <= st.session_state[f"{k}_s"]:
                 st.warning("'까지'가 '부터'보다 늦어야 해요.")
-        st.markdown('<div class="sec-title" style="margin-top:.6rem">📍 버리는 장소</div>', unsafe_allow_html=True)
-        st.text_input("버리는 장소", key="place_all", placeholder="예) 101동 앞", label_visibility="collapsed")
-        for k in ("rec", "gen", "food"):
-            st.session_state[f"{k}_p"] = st.session_state.get("place_all", "")
 
     st.button("✅ 확인 (저장)", key="ok_area", on_click=save_and_go, use_container_width=True)
     with st.container(key="size_toggle"):
         st.toggle("글자 더 크게", key="big")
-    footer()
-
-
-def screen_qr() -> None:
-    render_nav("qr")
-    st.markdown('<div class="page-title">QR 찍고<br>바로 시작</div>', unsafe_allow_html=True)
-    if "app_url" not in st.session_state:
-        st.session_state["app_url"] = detect_app_url()
-    base = st.session_state["app_url"].strip().rstrip("/")
-    if base.startswith(("http://", "https://")):
-        st.image(make_qr_png(base), use_container_width=True)
-        st.markdown('<div class="step" style="text-align:center">📷 폰 카메라로 찍어 보세요</div>', unsafe_allow_html=True)
-    else:
-        st.warning("QR 링크를 넣어 주세요.")
-    with st.expander("QR 링크"):
-        st.text_input("QR 링크", key="app_url", placeholder="https://내앱이름.streamlit.app")
-
-    with st.container(key="size_toggle"):
-        st.toggle("글자 더 크게", key="big")
-    footer()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -963,7 +843,5 @@ if page == "cover":
     screen_cover()
 elif page == "find":
     screen_find(now)
-elif page == "qr":
-    screen_qr()
 else:
     screen_area()
