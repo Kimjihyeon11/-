@@ -330,7 +330,7 @@ PAGES = {"area": "🏘️ 우리 동네", "find": "🔍 물건 검색", "qr": "�
 # 2. 상태 관리
 #    화면을 바꾸면 안 보이는 위젯의 값이 사라지므로, 매번 값을 다시 저장해 둡니다.
 # ──────────────────────────────────────────────────────────────
-PERSIST = ["use_cam", "query", "memo", "area", "big", "app_url", "include_area"] + [
+PERSIST = ["region", "use_cam", "query", "memo", "area", "big", "app_url", "include_area", "place_all"] + [
     f"{k}_{s}" for k in ("rec", "gen", "food") for s in ("days", "s", "e", "p", "tp")
 ]
 for _k in PERSIST:
@@ -370,6 +370,18 @@ def on_area_change() -> None:
     apply_preset(st.session_state["area"])
 
 
+def save_and_go() -> None:
+    """확인: 지역·요일·시간·장소를 주소에 저장하고 검색 화면으로 이동"""
+    ss = st.session_state
+    qp = st.query_params
+    qp["r"] = ss.get("region", "").strip()
+    qp["p"] = ss.get("place_all", "")
+    for k in ("rec", "gen", "food"):
+        days = "".join(ss.get(f"{k}_days") or [])
+        qp[k] = f"{days}|{ss[f'{k}_s']:%H%M}|{ss[f'{k}_e']:%H%M}"
+    ss["page"] = "find"
+
+
 def go(page: str) -> None:
     st.session_state["page"] = page
 
@@ -397,11 +409,23 @@ def make_pick(widget_key: str):
 
 if "init" not in st.session_state:
     st.session_state["area"] = CUSTOM_AREA
+    st.session_state["region"] = st.query_params.get("r", "")
+    st.session_state["place_all"] = st.query_params.get("p", "")
     for _k in ("rec", "gen", "food"):
         st.session_state[f"{_k}_days"] = []
         st.session_state[f"{_k}_s"] = dtime(18, 0)
         st.session_state[f"{_k}_e"] = dtime(22, 0)
         st.session_state[f"{_k}_p"] = ""
+        try:  # 저장된 값 불러오기 (요일|시작|끝)
+            _v = st.query_params.get(_k, "")
+            if _v:
+                _d, _a, _b = _v.split("|")
+                _days = [w for w in WEEK if w in _d]
+                st.session_state[f"{_k}_days"] = _days
+                st.session_state[f"{_k}_s"] = dtime(int(_a[:2]), int(_a[2:]))
+                st.session_state[f"{_k}_e"] = dtime(int(_b[:2]), int(_b[2:]))
+        except Exception:
+            pass
     st.session_state["query"] = ""
     st.session_state["recent"] = []
     st.session_state["memo"] = ""
@@ -685,7 +709,7 @@ def footer() -> None:
 
 DEFAULT_DROP = {
     "대형": "신고한 배출일에만 내놓을 수 있어요. 신고 없이 내놓으면 과태료 대상일 수 있어요.",
-    "불연성": "특수규격마대(불연성 봉투)에 담아 내놓아요. 이름과 판매처는 지역마다 달라요.",
+    "불연성": "특수규격마대(불연성 봉투)에 담아 내놓아요.",
     "별도": "배출 요일이 따로 없어요. 전용 수거함을 이용하세요.",
     "확인": "구청 청소 담당 부서나 주민센터에 확인하세요.",
 }
@@ -693,6 +717,8 @@ DEFAULT_DROP = {
 
 def render_drop(item: dict, now: datetime) -> None:
     kind = item["kind"]
+    if kind not in KIND_KEY and not item.get("drop") and kind in ("별도", "확인"):
+        return  # 알려 줄 내용이 없는 안내 상자는 보여 주지 않음
     if kind in KIND_KEY:
         k = KIND_KEY[kind]
         status, msg = drop_status(k, now)
@@ -708,7 +734,39 @@ def render_drop(item: dict, now: datetime) -> None:
     )
 
 
+REGION_RULES = {
+    "못·나사·철사": [
+        (("광진",), "red", "대형·신고·특수마대", "특수마대(불연성 봉투)에 담아 내놓아요 (광진구 안내)"),
+        (("부산", "북구"), "yellow", "씻어서 재활용", "고철로 내놓아요 (부산 북구 안내)"),
+    ],
+    "방석": [
+        (("부산", "북구"), "red", "종량제 봉투", "종량제 봉투에 넣어요 (부산 북구 안내)"),
+    ],
+}
+
+
+def region_override(item: dict):
+    region = st.session_state.get("region", "").replace(" ", "")
+    for keys, color, label, text in REGION_RULES.get(item["name"], []):
+        if all(x in region for x in keys):
+            return text
+    return None
+
+
 def render_result(item: dict, now: datetime) -> None:
+    region = st.session_state.get("region", "").strip()
+    local = region_override(item)
+    if local:
+        signal_card(item["way"], f'{item["name"]}: {local}')
+        render_drop(item, now) if item["kind"] in KIND_KEY else None
+        return
+    if item["kind"] == "확인":
+        signal_card("unknown", f'{item["name"]}: 지역마다 달라요')
+        if region:
+            st.link_button(f"🔎 {region} 기준 찾아보기", f"https://search.naver.com/search.naver?query={quote(region + ' ' + item['name'] + ' 분리배출')}")
+        else:
+            st.markdown('<div class="step">위에서 우리 동네를 먼저 입력해 주세요</div>', unsafe_allow_html=True)
+        return
     signal_card(item["way"], f'{item["name"]}: {item["headline"]}')
     if item["badges"]:
         st.markdown("".join(f'<span class="badge">{b}</span>' for b in item["badges"]), unsafe_allow_html=True)
@@ -847,6 +905,8 @@ def screen_area() -> None:
 
     # ── 우리 동네 (단순) ──
     with st.container(border=True):
+        st.markdown('<div class="sec-title">📍 우리 동네</div>', unsafe_allow_html=True)
+        st.text_input("우리 동네", key="region", placeholder="예) 서울 광진구", label_visibility="collapsed")
         for k in ("rec", "gen", "food"):
             icon = {"rec": "♻️", "gen": "🗑️", "food": "🍚"}[k]
             st.markdown(f'<div class="day-title">{icon} {KIND_PLAIN[k]}</div>', unsafe_allow_html=True)
@@ -854,16 +914,20 @@ def screen_area() -> None:
                 f"{KIND_PLAIN[k]} 요일", WEEK, selection_mode="multi", key=f"{k}_days",
                 label_visibility="collapsed",
             )
-        st.markdown('<div class="sec-title" style="margin-top:.6rem">🕗 시간 · 장소</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sec-title" style="margin-top:.6rem">🕗 시간</div>', unsafe_allow_html=True)
         for k in ("rec", "gen", "food"):
             st.markdown(f'<div class="day-title">{KIND_PLAIN[k]}</div>', unsafe_allow_html=True)
             c1, c2 = st.columns(2)
             c1.time_input("부터", key=f"{k}_s", step=300)
             c2.time_input("까지", key=f"{k}_e", step=300)
-            st.text_input("장소", key=f"{k}_p", placeholder="예) 101동 앞", label_visibility="collapsed")
             if st.session_state[f"{k}_e"] <= st.session_state[f"{k}_s"]:
                 st.warning("'까지'가 '부터'보다 늦어야 해요.")
+        st.markdown('<div class="sec-title" style="margin-top:.6rem">📍 버리는 장소</div>', unsafe_allow_html=True)
+        st.text_input("버리는 장소", key="place_all", placeholder="예) 101동 앞", label_visibility="collapsed")
+        for k in ("rec", "gen", "food"):
+            st.session_state[f"{k}_p"] = st.session_state.get("place_all", "")
 
+    st.button("✅ 확인 (저장)", key="ok_area", on_click=save_and_go, use_container_width=True)
     with st.container(key="size_toggle"):
         st.toggle("글자 더 크게", key="big")
     footer()
