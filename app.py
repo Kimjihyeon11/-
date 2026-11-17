@@ -19,6 +19,7 @@ from datetime import datetime, time as dtime, timedelta, timezone
 from io import BytesIO
 from urllib.parse import quote
 
+import qrcode
 import requests
 from PIL import Image
 import streamlit as st
@@ -315,14 +316,14 @@ KIND_KEY = {"재활용": "rec", "일반": "gen", "음식물": "food"}
 KIND_PLAIN = {"rec": "재활용", "gen": "일반쓰레기", "food": "음식물"}
 KIND_LABEL = {"rec": "♻️ 재활용", "gen": "🗑️ 일반(종량제)", "food": "🍚 음식물"}
 
-PAGES = {"area": "🏘️ 우리 동네", "find": "🔍 물건 검색"}  # 화면은 딱 2개
+PAGES = {"area": "🏘️ 우리 동네", "find": "🔍 물건 검색", "qr": "📲 QR"}  # 화면은 딱 3개
 
 
 # ──────────────────────────────────────────────────────────────
 # 2. 상태 관리
 #    화면을 바꾸면 안 보이는 위젯의 값이 사라지므로, 매번 값을 다시 저장해 둡니다.
 # ──────────────────────────────────────────────────────────────
-PERSIST = ["region", "use_cam", "query", "big"] + [
+PERSIST = ["region", "use_cam", "query", "big", "app_url"] + [
     f"{k}_{s}" for k in ("rec", "gen", "food") for s in ("days", "s", "e")
 ]
 for _k in PERSIST:
@@ -736,7 +737,7 @@ def render_photo_box(now: datetime) -> None:
 
 
 def render_nav(page: str) -> None:
-    """상단 화면 이동 버튼 (2개 + 표지)"""
+    """상단 화면 이동 버튼 (3개 + 표지)"""
     st.session_state["nav"] = PAGES[page]
     st.segmented_control(
         "화면 이동", list(PAGES.values()), key="nav", on_change=on_nav, label_visibility="collapsed"
@@ -832,6 +833,51 @@ def screen_area() -> None:
         st.toggle("글자 더 크게", key="big")
 
 
+def detect_app_url() -> str:
+    url = os.environ.get("APP_URL", "")
+    if not url:
+        try:
+            url = str(st.secrets.get("APP_URL", ""))
+        except Exception:
+            url = ""
+    if not url:
+        try:
+            host = st.context.headers.get("Host", "")
+            if host:
+                scheme = "http" if host.startswith(("localhost", "127.0.0.1")) else "https"
+                url = f"{scheme}://{host}"
+        except Exception:
+            url = ""
+    return url
+
+
+def make_qr_png(url: str) -> bytes:
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=12, border=3)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="#14532d", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def screen_qr() -> None:
+    render_nav("qr")
+    st.markdown('<div class="page-title">QR 찍고<br>바로 시작</div>', unsafe_allow_html=True)
+    if "app_url" not in st.session_state:
+        st.session_state["app_url"] = detect_app_url()
+    base = st.session_state["app_url"].strip().rstrip("/")
+    if base.startswith(("http://", "https://")):
+        st.image(make_qr_png(base), use_container_width=True)
+        st.markdown('<div class="step" style="text-align:center">📷 폰 카메라로 찍어 보세요</div>', unsafe_allow_html=True)
+    else:
+        st.warning("QR 링크를 넣어 주세요.")
+    with st.expander("QR 링크"):
+        st.text_input("QR 링크", key="app_url", placeholder="https://내앱이름.streamlit.app")
+    with st.container(key="size_toggle"):
+        st.toggle("글자 더 크게", key="big")
+
+
 # ──────────────────────────────────────────────────────────────
 # 7. 실행
 # ──────────────────────────────────────────────────────────────
@@ -843,5 +889,7 @@ if page == "cover":
     screen_cover()
 elif page == "find":
     screen_find(now)
+elif page == "qr":
+    screen_qr()
 else:
     screen_area()
